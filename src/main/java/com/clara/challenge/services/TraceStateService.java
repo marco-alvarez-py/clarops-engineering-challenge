@@ -24,9 +24,8 @@ public class TraceStateService {
             .findById(traceId)
             .orElseThrow(() -> new TraceNotFoundException(traceId));
 
-    if (hasTtlExpired(state)) {
-      state.setStatus(TraceStatus.TTL_EXPIRED_FOR_EVENT);
-      traceStateRepository.save(state);
+    if (isTtlExpired(state)) {
+      markTtlExpired(state);
     }
 
     return new TraceStatusResponse(
@@ -49,10 +48,27 @@ public class TraceStateService {
     return traceStateRepository.save(newState);
   }
 
-  private boolean hasTtlExpired(TraceState state) {
-    return state.getStatus() == TraceStatus.WAITING_OTHER_EVENT
+  /**
+   * A trace is expired either because it was already flagged as such on a previous read/ingest, or
+   * because it is still waiting for an event whose deadline has now passed.
+   */
+  public boolean isTtlExpired(TraceState state) {
+    return state.getStatus() == TraceStatus.TTL_EXPIRED_FOR_EVENT
+        || (state.getStatus() == TraceStatus.WAITING_OTHER_EVENT
             && state.getNextExpectedBefore() != null
-            && Instant.now().isAfter(state.getNextExpectedBefore());
+            && Instant.now().isAfter(state.getNextExpectedBefore()));
+  }
+
+  /**
+   * TTL expiration is not a terminal state: it only marks that the previously expected event missed
+   * its deadline. Persists the transition once, so repeated calls are a no-op.
+   */
+  public void markTtlExpired(TraceState state) {
+    if (state.getStatus() != TraceStatus.TTL_EXPIRED_FOR_EVENT) {
+      state.setStatus(TraceStatus.TTL_EXPIRED_FOR_EVENT);
+      state.setUpdatedAt(Instant.now());
+      traceStateRepository.save(state);
+    }
   }
 
   private TraceState applyTransition(

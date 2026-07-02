@@ -14,3 +14,8 @@
 - Implement the controllers to handler `POST /events` and `GET /traces/{traceId}/status`.
 - Implement all the classes necessary to support the new endpoints.
 
+## Task 3 — Implement the tests
+
+- Implement unit test for the business logic.
+- Implement hurl test for the endpoints.
+

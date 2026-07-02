@@ -7,9 +7,9 @@ import com.clara.challenge.entities.TraceState;
 import com.clara.challenge.enums.TraceStatus;
 import com.clara.challenge.exceptions.DuplicateEventException;
 import com.clara.challenge.exceptions.TraceAlreadyCompletedException;
+import com.clara.challenge.exceptions.TtlExpiredException;
 import com.clara.challenge.exceptions.UnexpectedEventException;
 import com.clara.challenge.repositories.EventRepository;
-import com.clara.challenge.repositories.TraceStateRepository;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +24,14 @@ public class EventService {
   private final EventRepository eventRepository;
   private final TraceStateService traceStateService;
 
-  @Transactional
+  /**
+   * TTL expiration is not terminal: a late arrival of the expected event is rejected (and eagerly
+   * flips the trace to {@code TTL_EXPIRED_FOR_EVENT} if it wasn't already), but a different event
+   * arriving after the deadline is accepted and the flow simply continues from it. The eager
+   * expiration write must survive the {@link TtlExpiredException} rejection, hence {@code
+   * noRollbackFor}.
+   */
+  @Transactional(noRollbackFor = TtlExpiredException.class)
   public EventResponse ingest(EventRequest request) {
     if (eventRepository.existsByEventId(request.eventId())) {
       throw new DuplicateEventException(request.eventId());
@@ -34,11 +41,21 @@ public class EventService {
     if (currentState != null && currentState.getStatus() == TraceStatus.COMPLETED) {
       throw new TraceAlreadyCompletedException(request.traceId());
     }
+
     if (currentState != null && currentState.getNextExpectedEvent() != null) {
       String expected = currentState.getNextExpectedEvent();
-      if (!expected.equals(request.eventName())) {
+      boolean nameMatches = expected.equals(request.eventName());
+      boolean ttlExpired = traceStateService.isTtlExpired(currentState);
+
+      if (nameMatches && ttlExpired) {
+        traceStateService.markTtlExpired(currentState);
+        throw new TtlExpiredException(request.traceId());
+      }
+      if (!nameMatches && !ttlExpired) {
         throw new UnexpectedEventException(request.traceId(), expected, request.eventName());
       }
+      // nameMatches && !ttlExpired -> accepted, on time.
+      // !nameMatches && ttlExpired -> accepted, the flow continues with this event instead.
     }
 
     Event event = buildEvent(request);

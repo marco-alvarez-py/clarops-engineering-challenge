@@ -40,3 +40,24 @@
 
 > There is an edge case scenario where an event could arrive with one of this fields nextExpectedEvent or nextEventTtlSeconds with null value. This could break the business logic of the GET method if it persiste in that way. Run some tests with this case to verify this scenario. If my assumption is correct, implements a validation when we receive the event that should have both values (in case of one of them has been sent)
 
+## Prompts 10 - Implement unit tests for the EventService, TraceStateService
+
+> Implement unit tests for the EventService, TraceStateService and TraceStateTransitionResolver.
+> Take into account the following suggestions:
+> - Use the Roy Osherove style for all implementations: methodName_stateUnderTest_expectedBehavior
+> - Each test should validate one business rule only.
+> - Use Mockito if necessary.
+> - Focus on test every state transitions possible, TTL expiration, final event behavior, duplicate events, and late events.
+
+## Prompts 11 - There is a wrong behaviour when the
+
+> There is a wrong behaviour when the late event arrives, match the expected name but TTL already expired. When TTL expired it always have to return an error. Make the fixes to the business logic and also in the tests
+
+## Prompts 12 - We need to make some big changes
+
+> We need to make some big changes, the TTL expiration is NOT a final state (as it is right now, it will not accept any new event on that trace). So adjust the business logic to the following logic:
+> - A new event that arrives with the expected name and before nextExpectedBefore expires, is accepted (already implemented)
+> - A new event that arrives with the expected name but after nextExpectedBefore expires, is rejected and the trace must be updated if is not already in the expiration state.
+> - A new event that arrives with a name different than expected but before nextExpectedBefore expires, is rejected.
+> - A new event that arrives with a name different than expected but after nextExpectedBefore expires, is accepted and the flow continues.
+

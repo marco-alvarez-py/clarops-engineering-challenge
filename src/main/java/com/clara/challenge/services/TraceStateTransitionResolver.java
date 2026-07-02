@@ -10,7 +10,7 @@ import java.time.Instant;
  *
  * <p>The resulting state is derived solely from the incoming event's own fields (finalEvent /
  * nextExpectedEvent / nextEventTtlSeconds), not from matching eventName against a previously
- * expected event. See README for the documented assumption.
+ * expected event.
  */
 public final class TraceStateTransitionResolver {
 

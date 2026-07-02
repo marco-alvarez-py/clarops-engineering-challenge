@@ -14,7 +14,8 @@ public class ApiExceptionHandler {
   @ExceptionHandler({
     DuplicateEventException.class,
     TraceAlreadyCompletedException.class,
-    UnexpectedEventException.class
+    UnexpectedEventException.class,
+    TtlExpiredException.class
   })
   public ResponseEntity<Map<String, String>> handleConflict(RuntimeException ex) {
     return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", ex.getMessage()));
