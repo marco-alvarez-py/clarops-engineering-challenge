@@ -1,6 +1,6 @@
-package com.clara.challenge;
+package com.clara.challenge.controllers;
 
-import com.clara.challenge.health.HealthService;
+import com.clara.challenge.services.HealthService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;

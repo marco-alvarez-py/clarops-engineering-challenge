@@ -52,9 +52,9 @@ CREATE
 -- Upserted in the same transaction as the events insert so
 -- GET /traces/{traceId}/status is a single indexed lookup
 -- instead of replaying the full event log on every read.
--- TTL_EXPIRED_FOR_EVENT is derived at read time by comparing
--- next_expected_before to now(); it is not a value ever
--- persisted here.
+-- TTL_EXPIRED_FOR_EVENT is detected lazily by comparing
+-- next_expected_before to now() when the status is read, then
+-- written back here so later reads don't need to recompute it.
 -- -------------------------
 CREATE
   TABLE

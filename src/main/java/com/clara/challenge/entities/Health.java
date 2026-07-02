@@ -1,4 +1,4 @@
-package com.clara.challenge.health;
+package com.clara.challenge.entities;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

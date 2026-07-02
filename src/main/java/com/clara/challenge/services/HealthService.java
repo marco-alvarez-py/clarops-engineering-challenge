@@ -1,5 +1,7 @@
-package com.clara.challenge.health;
+package com.clara.challenge.services;
 
+import com.clara.challenge.entities.Health;
+import com.clara.challenge.repositories.HealthRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
