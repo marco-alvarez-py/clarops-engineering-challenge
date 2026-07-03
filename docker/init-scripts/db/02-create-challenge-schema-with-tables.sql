@@ -39,13 +39,6 @@ CREATE
       )
     );
 
-CREATE
-  INDEX IF NOT EXISTS idx_events_trace_id_received_at ON
-  events(
-    trace_id,
-    received_at
-  );
-
 -- -------------------------
 -- trace_state
 -- Materialized projection of the latest event per traceId.

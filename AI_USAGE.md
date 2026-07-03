@@ -77,3 +77,32 @@
 
 > Now create the hurl tests for the states STARTED, WAITING_OTHER_EVENT and COMPLETED in independent files
 
+## Prompts 17 - In the README.md file, prepare the structure
+
+> In the README.md file, prepare the structure (do not complete the questions) about the all the decisions/trade-offs that this challenge posed.
+
+## Prompts 18 - In the docker/init-scripts we created for the
+
+> In the docker/init-scripts we created for the solution, validate if the index idx_events_trace_id_received_at is still useful. And create an index for the field event_id since it is used in the existsByEventId method.
+
+## Accepted Suggestions
+
+- Data model **Option B** (separate `events` append-only log + `trace_state` materialized projection table) over Option A (single mutable table), so `GET /traces/{traceId}/status` stays a single indexed lookup instead of replaying the event log, while `events` keeps full history for `eventId` de-duplication and audit.
+- Added the `ConsistentNextEventFields` class-level bean validation constraint to reject requests where only one of `nextExpectedEvent` / `nextEventTtlSeconds` is set, after confirming via a scratch test that a partial pair would silently corrupt `TraceState` on read.
+- Introduced `TtlExpiredException` (409) so a late event matching the expected name after the TTL deadline is always rejected, instead of being silently accepted.
+- Reworked the TTL rule so `TTL_EXPIRED_FOR_EVENT` is not terminal: implemented the 4-case matrix (expected/different name × before/after deadline), including `@Transactional(noRollbackFor = TtlExpiredException.class)` on `EventService.ingest` so the eager `markTtlExpired` write survives the thrown exception in the same transaction.
+- Roy Osherove-style unit tests (`methodName_stateUnderTest_expectedBehavior`) for `EventService`, `TraceStateService`, and `TraceStateTransitionResolver`, using Mockito with `eq()`/`any()` matcher combinations and `ArgumentCaptor` for verifying persisted entity state.
+- Full hurl E2E coverage split into one file per custom exception (`duplicate-event-exception.hurl`, `trace-already-completed-exception.hurl`, `unexpected-event-exception.hurl`, `ttl-expired-exception.hurl`, `trace-not-found-exception.hurl`) and one file per trace status (`started-flow.hurl`, `waiting-other-event-flow.hurl`, `completed-flow.hurl`), plus `full-flow.hurl` for the end-to-end STARTED → WAITING_OTHER_EVENT → COMPLETED path.
+
+## Rejected Suggestions
+
+- Data modeling Option A (single mutable `trace_state`-only table with no separate event log) — rejected in favor of Option B to preserve full event history and support `eventId` de-duplication and `eventsReceived` counts.
+- Keeping a `status` field on `EventResponse` alongside the Event entity fields.
+- Adding a new explicit `CREATE INDEX` on `events.event_id` — rejected as redundant once confirmed that `CONSTRAINT uq_events_event_id UNIQUE(event_id)` already creates a backing unique btree index that `existsByEventId` uses.
+
+## Manual Decisions
+
+- Kept `eventsReceived` initialization (`= 1`) as a field default on the `TraceState` entity rather than setting it explicitly in `EventIngestionService`/`EventService`.
+- Redesigned `EventResponse` to mirror the `Event` entity (minus `id`/`metadata`)
+- Migrated all timestamp fields (`Event`, `TraceState`, DTOs) from `OffsetDateTime` to `Instant`, since every timestamp in this system is a UTC instant with no need to preserve an offset.
+

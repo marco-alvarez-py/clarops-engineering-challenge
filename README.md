@@ -1,5 +1,285 @@
 # Distributed Event Watchdog Challenge
 
+---
+
+## Problem Understanding
+
+A service is needed that receives events from distributed systems (POST `/events`) and can infer the flow state based on trace ID (GET `/traces/{traceId}/status`) and the event data.
+
+## Assumptions
+
+- The field `occurredAt` will always be represented as an ISO 8601 timestamp in UTC (e.g. `2026-06-15T10:00:00Z`).
+- Originating services are responsible for making retries in case events are rejected.
+- Event ID, trace ID, and events name will not exceed 255 characters.
+
+## Technical decisions
+
+### Database Modeling
+
+I opted for a model where event histories are stored, but only the last state associated with a trace id is maintained. I also decided to create a new schema in the database to separate the existing code and, incidentally, show the use of entities from different schemas.
+
+The schema is defined as follows: `distributed_event_watchdog`
+
+Tables & columns:
+
+![tables.png](tables.png)
+
+Constraints: For the `events` table, a unique constraint over the `event_id`, and two constraints to validate values for columns `result` and `next_event_ttl_seconds`. And for `trace_state` table, three constraints to validate values for columns `status`, `last_event_result` and `events_received`.
+
+Indexes: It was not necessary to create any additional indexes.
+
+`metadata` value: It is stored as a JSONB and its purpose is to serve as a backup of the data sent in case of an audit or if it is necessary to track down a problem.
+
+### Architecture proposal
+
+To maintain the service as simple as possible, I opted to follow the Layered Architecture approach that already exists in the project for the `/health` endpoint, just moving all the classes to the corresponding folders.
+
+## Questions & Trade-offs
+
+### 1. Event Ingestion
+
+### 1.1 Duplicate `eventId` handling
+
+- **Question:** What should happen if the same `eventId` is received more than once?
+- **Decision:** Reject the event because it is a duplicate ID.
+- **Rationale:** The `eventId` field is a unique identifier for each event, so receiving more than one identical `eventId` indicates potential data duplication.
+- **Trade-offs / alternatives considered:** An alternative could have been to check if all received data was exactly the same as existing data, and then return a 200 status code.
+
+### 1.2 Unexpected event name
+
+- **Question:** What should happen if an event arrives with a different `eventName` than the currently expected event?
+- **Decision:** It depends on the expected TTL. If the expected event is still within the time window, the new event is discarded with an error message. If the expected event has already expired, then the new event is accepted and the trace enters a `STARTED` or `WAITING_OTHER_EVENT` state.
+- **Rationale:** Events arrive from different sources, and it's possible that one of those sources might be offline. Therefore, once the TTL has elapsed, the next source could send the next expected event in the workflow, and the flow must continue until it reaches the `COMPLETED` state.
+- **Trade-offs / alternatives considered:** It is possible that a different event could occur before the TTL of the expected event expires, and therefore the message could be lost.
+
+### 1.3 Late event (expected event arrives after TTL already expired)
+
+- **Question:** What should happen if the expected event arrives after the TTL already expired?
+- **Decision:** An error message is returned indicating that the time has expired for that event.
+- **Rationale:** The rule is strict regarding the waiting time for a particular event; there could be other critical events/systems that depend on this response.
+- **Trade-offs / alternatives considered:** In a distributed system, time management is certainly a complex problem, but it is assumed that services are running with only a few milliseconds of difference.
+
+### 1.4 First event is also the final event
+
+- **Question:** What should happen if the first event received for a trace is also marked `finalEvent = true`?
+- **Decision:** The trace is marked as `COMPLETED`.
+- **Rationale:** This is a completely acceptable scenario, where a workflow has only one step, for example.
+- **Trade-offs / alternatives considered:** --
+
+### 1.5 Event with `result = ERROR` defining a next expected event
+
+- **Question:** What should happen if an event with `result = ERROR` also defines `nextExpectedEvent` / `nextEventTtlSeconds`?
+- **Decision:** The flow is not affected by what the `result` field indicates.
+- **Rationale:** The result of the event is completely independent of the flow of events; it only indicates the result of the execution on the source system.
+- **Trade-offs / alternatives considered:** --
+
+### 2. TTL & Trace State
+
+### 2.1 TTL calculation basis
+
+- **Question:** Should TTL be calculated from `occurredAt` or from the time the event was received by the service?
+- **Decision:** TTL is calculated from the field `occurredAt`.
+- **Rationale:** To maintain consistency, it's best to use the `occurredAt` field, as it's the timestamp of the event's origin. Using the time when the event reached the service could mean that a considerable amount of time had already passed.
+- **Trade-offs / alternatives considered:** Of course, the servers' internal clocks won't be 100% synchronized, but it's assumed they'll be close enough in time difference.
+
+### 2.2 Is TTL expiration a terminal state?
+
+- **Question:** Once a trace reaches `TTL_EXPIRED_FOR_EVENT`, can it still accept and process further events, or is it a dead end?
+- **Decision:** It is not a terminal state and can continue to accept events.
+- **Rationale:** As explained in 1.2, that state only indicates that the expected event did not arrive within the configured TTL. Later a different source could send another event from the same workflow. The final state is explicitly indicated in the `finalEvent` field.
+- **Trade-offs / alternatives considered:** The trade-off is that we have no guarantee that the newly accepted event is actually the next one in the workflow.
+
+### 2.3 Completed trace accepting further events
+
+- **Question:** Should a completed trace accept more events?
+- **Decision:** No, it is a terminal state.
+- **Rationale:** The field `finalEvent` indicates that the event completes the flow. So no further events are expected.
+- **Trade-offs / alternatives considered:** --
+
+### 2.4 Avoiding inconsistent trace states
+
+- **Question:** How should the service avoid inconsistent trace states?
+- **Decision:** Ensures `nextExpectedEvent` and `nextEventTtlSeconds` are either both present or both absent.
+- **Rationale:** Since the expected fields are not required for the POST method, this could cause an event to arrive with only one of these fields, for example `nextExpectedEvent`, and when calculating whether it expired or not, an inconsistency would occur because that data was not stored.
+- **Trade-offs / alternatives considered:** --
+
+### 3. API Contract
+
+### 3.1 `POST /events` response shape
+
+- **Question:** What should the event ingestion response contain?
+- **Decision:** The resource created by the POST method.
+- **Rationale:** Respecting that the method returns Status Code 201, the created event is returned, but without the database ID or the metadata field
+- **Trade-offs / alternatives considered:** There could be several alternatives here, such as not returning any response body or a much smaller object like those defined at the beginning of the solution, where only 3 fields were returned: `eventId`, `traceId` and `traceStatus`.
+
+### 3.2 `GET /traces/{traceId}/status` response shape
+
+- **Question:** What fields belong in the status response beyond the minimum example given?
+- **Decision:** I opted to maintain the same response shape as the example.
+- **Rationale:** The proposed definition already had all the significant and important fields for the service.
+- **Trade-offs / alternatives considered:** An ordered list of states could be returned, where the first (or last) element indicates the current state, as well as the history of events up to that state.
+
+### 3.3 Unknown `traceId` on status query
+
+- **Question:** What should be returned when querying a `traceId` that does not exist?
+- **Decision:** Http Status Code 404 with an error message.
+- **Rationale:** This is the default (and expected behavior) status code indicating that the server cannot find the requested resource.
+- **Trade-offs / alternatives considered:** --
+
+### 3.4 Request validation rules
+
+- **Question:** Which request-level constraints (beyond the documented required fields) are enforced, and why?
+- **Decision:** `nextExpectedEvent` and `nextEventTtlSeconds` are either both present or both absent.
+- **Rationale:** As mentioned in 2.4, the absence of one of these fields would cause an inconsistency later on.
+- **Trade-offs / alternatives considered:** --
+
+### 4. Data Model
+
+### 4.1 Storing event history vs. current trace state
+
+- **Question:** Should the schema store full event history, only the current trace state, or both?
+- **Decision:** The schema stores full event history with only the current trace state.
+- **Rationale:** The GET method requires the current state of an event trace, so maintaining a history of event traces would overcomplicate the business logic and scope of this MVP.
+- **Trade-offs / alternatives considered:** Two more options were on the table: storing all the data in a single event table where it would have a column for its state, and the other was to store the entire trace history.
+
+### 4.2 `metadata` storage format
+
+- **Question:** Should `metadata` be stored as JSON, structured columns, or ignored?
+- **Decision:** Stored as JSON.
+- **Rationale:** Storing this data could be used for an "audit" in case any external/internal service fails and the data associated with the event is needed.
+- **Trade-offs / alternatives considered:** Storing this data generates higher consumption of the database's storage capacity compared to ignoring it, but the truth is that storing it or not depends a lot on the final use of the service.
+
+### 4.3 Constraints & indexes
+
+- **Question:** Which constraints and indexes are necessary to support the required access patterns?
+- **Decision:** In the `events` table was created a unique constraint over the `event_id` column, therefore, an index was created by the database engine itself. Also, to guarantee data values, some constraints were created for the `events` and `trace_state` tables.
+- **Rationale:** The table `trace_state` already defines the `trace_id` column as a primary key and with the unique constraint over the `event_id` column in `events` table, all the business logic was covered.
+- **Trade-offs / alternatives considered:** --
+
+### 5. Testing Strategy
+
+### 5.1 Unit testing standard
+
+- **Question:** What convention and scope were used for unit tests?
+- **Decision:** The convention followed was Roy Osherove style and the scope was to test the business logic of the services.
+- **Rationale:** I opted to use this convention because it was the most clear, structured, easy to scan at a glance, since by reading the definition of the method you can get a clear idea of what is being tested: `methodName_stateUnderTest_expectedBehavior`
+- **Trade-offs / alternatives considered:** Other alternatives considered were: `should_expectedBehavior_when_stateUnderTest` and `given_when_then` styles.
+
+### 5.2 Hurl E2E coverage
+
+- **Question:** Which scenarios are covered end-to-end, and which were intentionally left out?
+- **Decision:** Are covered the basics one like: `STARTED`, `WAITING_OTHER_EVENT`, `TTL_EXPIRED_FOR_EVENT` and `COMPLETED`. Also, the scenarios where the service is expected to fail were covered such as duplicated event, trace already completed, trace not found and unexpected event. Last but not least, a complete flow with all the possible states was covered.
+- **Rationale:** Having a complete set of end-to-end tests is important to ensure that the service is working as expected and not relay only on unit tests.
+- **Trade-offs / alternatives considered:** --
+
+## How to run the project
+
+The way to run the application remained as indicated in SETUP.md:
+
+```bash
+./mvnw spring-boot:run
+```
+
+## How to run the Hurl tests
+
+Different files were created for each possible scenario within the `hurl` folder, according to the suggested structure.
+
+Therefore, execution would be via the following command:
+
+```bash
+hurl --test hurl/*.hurl
+```
+
+## Request and Response Examples
+
+### `POST /events`:
+
+#### Request body:
+
+```json
+{
+  "eventId": "4bf03bd8-e8de-49c3-a108-a7d534208628",
+  "traceId": "ff80d6f9-e7ea-4e75-ab7d-fbc79f22a48b",
+  "eventName": "ORDER_CREATED",
+  "result": "SUCCESS",
+  "occurredAt": "2026-07-02T10:00:00Z",
+  "nextExpectedEvent": "SHIPPING_ORDER",
+  "nextEventTtlSeconds": 600,
+  "finalEvent": false,
+  "metadata": {
+    "totalAmount": 2500.00,
+    "shippingCost": 15.00,
+    "clientId": "CI-4740423545"
+  }
+}
+```
+
+Request `curl` sentence:
+
+```bash
+curl -X POST http://localhost:8080/api/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "4bf03bd8-e8de-49c3-a108-a7d534208628",
+    "traceId": "ff80d6f9-e7ea-4e75-ab7d-fbc79f22a48b",
+    "eventName": "ORDER_CREATED",
+    "result": "SUCCESS",
+    "occurredAt": "2026-07-02T10:00:00Z",
+    "nextExpectedEvent": "SHIPPING_ORDER",
+    "nextEventTtlSeconds": 600,
+    "finalEvent": false,
+    "metadata": {
+      "totalAmount": 2500.00,
+      "shippingCost": 15.00,
+      "clientId": "CI-4740423545"
+    }
+  }'
+```
+
+#### Response
+
+```json
+{
+  "eventId": "4bf03bd8-e8de-49c3-a108-a7d534208628",
+  "traceId": "ff80d6f9-e7ea-4e75-ab7d-fbc79f22a48b",
+  "eventName": "ORDER_CREATED",
+  "result": "SUCCESS",
+  "occurredAt": "2026-07-02T10:00:00Z", 
+  "receivedAt": "2026-07-02T10:00:01Z",
+  "nextExpectedEvent": "SHIPPING_ORDER",
+  "nextEventTtlSeconds": 600,
+  "finalEvent": false
+}
+```
+
+### `GET /traces/{traceId}/status`:
+
+#### Request body:
+
+No body required.
+
+Request `curl` sentence:
+
+```bash
+curl http://localhost:8080/api/traces/ff80d6f9-e7ea-4e75-ab7d-fbc79f22a48b/status
+```
+
+#### Response
+
+```json
+{
+   "traceId": "ff80d6f9-e7ea-4e75-ab7d-fbc79f22a48b",
+   "status": "WAITING_OTHER_EVENT",
+   "lastEventName": "ORDER_CREATED",
+   "lastEventResult": "SUCCESS",
+   "nextExpectedEvent": "SHIPPING_ORDER",
+   "nextExpectedBefore": "2026-07-02T10:10:00Z",
+   "eventsReceived": 1
+}
+```
+
+---
+
 ## Context
 
 In Clarops, some operational flows are distributed across multiple services. Each service may emit events when it completes an action. In many cases, after one event is received, another event is expected to arrive within a specific time window.
