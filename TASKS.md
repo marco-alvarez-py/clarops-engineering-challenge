@@ -19,3 +19,7 @@
 - Implement unit test for the business logic.
 - Implement hurl test for the endpoints.
 
+## Task 4 — Documentations
+
+- Finish all the documentation needed.
+

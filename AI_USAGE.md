@@ -61,3 +61,19 @@
 > - A new event that arrives with a name different than expected but before nextExpectedBefore expires, is rejected.
 > - A new event that arrives with a name different than expected but after nextExpectedBefore expires, is accepted and the flow continues.
 
+## Prompts 13 - In the hurl folder, create a new
+
+> In the hurl folder, create a new file for the hurl test called 'full-flow.hurl' and in it create a full flow for and trace-id='full-trace-id' that calls to the POST /events following by the GET /traces/trace-id/status. The idea here is to start with an event that state in STARTED, then another event to move to WAITING_OTHER_EVENT, then another event that match the expected name but not final, and last an event that move the state to a COMPLETED state.
+
+## Prompts 14 - Create all the hurl test necessary to
+
+> Create all the hurl test necessary to cover each exceptions that were created. Separate it into differents files in the folder hurl.
+
+## Prompts 15 - Check if the spring-boot app finished starting
+
+> Check if the spring-boot app finished starting (Monitor task btccud80x / background bawarv0jo), then run the curl verification for the 5 new hurl exception scenarios, clean up test DB rows, and stop the app.
+
+## Prompts 16 - Now create the hurl tests for the
+
+> Now create the hurl tests for the states STARTED, WAITING_OTHER_EVENT and COMPLETED in independent files
+

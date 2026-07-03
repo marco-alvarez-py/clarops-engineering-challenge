@@ -58,7 +58,12 @@ class EventServiceTest {
   }
 
   private static EventRequest newRequest(
-      String eventId, String traceId, String eventName, String nextExpectedEvent, Integer ttl, Boolean finalEvent) {
+      String eventId,
+      String traceId,
+      String eventName,
+      String nextExpectedEvent,
+      Integer ttl,
+      Boolean finalEvent) {
     return new EventRequest(
         eventId,
         traceId,
@@ -82,7 +87,8 @@ class EventServiceTest {
 
   @Test
   void ingest_duplicateEventId_throwsDuplicateEventException() {
-    EventRequest request = newRequest("evt-1", "trace-1", "order.created", null, null, Boolean.FALSE);
+    EventRequest request =
+        newRequest("evt-1", "trace-1", "order.created", null, null, Boolean.FALSE);
     when(eventRepository.existsByEventId("evt-1")).thenReturn(true);
 
     assertThrows(DuplicateEventException.class, () -> eventService.ingest(request));
@@ -93,7 +99,8 @@ class EventServiceTest {
 
   @Test
   void ingest_traceAlreadyCompleted_throwsTraceAlreadyCompletedException() {
-    EventRequest request = newRequest("evt-2", "trace-1", "refund.issued", null, null, Boolean.FALSE);
+    EventRequest request =
+        newRequest("evt-2", "trace-1", "refund.issued", null, null, Boolean.FALSE);
     when(eventRepository.existsByEventId("evt-2")).thenReturn(false);
     when(traceStateService.findById("trace-1"))
         .thenReturn(createTraceState(TraceStatus.COMPLETED, null));
@@ -105,7 +112,8 @@ class EventServiceTest {
 
   @Test
   void ingest_differentNameBeforeDeadline_throwsUnexpectedEventException() {
-    EventRequest request = newRequest("evt-3", "trace-1", "shipment.created", null, null, Boolean.FALSE);
+    EventRequest request =
+        newRequest("evt-3", "trace-1", "shipment.created", null, null, Boolean.FALSE);
     when(eventRepository.existsByEventId("evt-3")).thenReturn(false);
     TraceState currentState = createTraceState(TraceStatus.WAITING_OTHER_EVENT, "payment.captured");
     when(traceStateService.findById("trace-1")).thenReturn(currentState);
@@ -119,13 +127,12 @@ class EventServiceTest {
 
   @Test
   void ingest_expectedNameBeforeDeadline_isAccepted() {
-    EventRequest request = newRequest("evt-4", "trace-1", "payment.captured", null, null, Boolean.FALSE);
+    EventRequest request =
+        newRequest("evt-4", "trace-1", "payment.captured", null, null, Boolean.FALSE);
     when(eventRepository.existsByEventId("evt-4")).thenReturn(false);
     TraceState currentState = createTraceState(TraceStatus.WAITING_OTHER_EVENT, "payment.captured");
     when(traceStateService.findById("trace-1")).thenReturn(currentState);
     when(traceStateService.isTtlExpired(currentState)).thenReturn(false);
-    TraceState newState = createTraceState(TraceStatus.STARTED, null);
-    when(traceStateService.save(any(), any())).thenReturn(newState);
 
     EventResponse response = eventService.ingest(request);
 
@@ -135,22 +142,21 @@ class EventServiceTest {
 
   @Test
   void ingest_noExistingTraceState_isAcceptedWithoutValidation() {
-    EventRequest request = newRequest("evt-5", "trace-new", "order.created", null, null, Boolean.FALSE);
+    EventRequest request =
+        newRequest("evt-5", "trace-new", "order.created", null, null, Boolean.FALSE);
     when(eventRepository.existsByEventId("evt-5")).thenReturn(false);
     when(traceStateService.findById("trace-new")).thenReturn(null);
-    TraceState newState = createTraceState(TraceStatus.STARTED, null);
-    newState.setTraceId("trace-new");
-    when(traceStateService.save(any(), any())).thenReturn(newState);
 
     EventResponse response = eventService.ingest(request);
 
     assertThat(response.traceId()).isEqualTo("trace-new");
-    assertThat(response.status()).isEqualTo(TraceStatus.STARTED);
+    assertThat(response.eventName()).isEqualTo("order.created");
   }
 
   @Test
   void ingest_expectedNameAfterDeadline_throwsTtlExpiredExceptionAndMarksTraceExpired() {
-    EventRequest request = newRequest("evt-6", "trace-1", "payment.captured", null, null, Boolean.FALSE);
+    EventRequest request =
+        newRequest("evt-6", "trace-1", "payment.captured", null, null, Boolean.FALSE);
     when(eventRepository.existsByEventId("evt-6")).thenReturn(false);
     TraceState currentState = createTraceState(TraceStatus.WAITING_OTHER_EVENT, "payment.captured");
     when(traceStateService.findById("trace-1")).thenReturn(currentState);
@@ -165,9 +171,11 @@ class EventServiceTest {
 
   @Test
   void ingest_expectedNameAfterDeadline_doesNotMarkExpiredAgainWhenAlreadyFlagged() {
-    EventRequest request = newRequest("evt-6b", "trace-1", "payment.captured", null, null, Boolean.FALSE);
+    EventRequest request =
+        newRequest("evt-6b", "trace-1", "payment.captured", null, null, Boolean.FALSE);
     when(eventRepository.existsByEventId("evt-6b")).thenReturn(false);
-    TraceState currentState = createTraceState(TraceStatus.TTL_EXPIRED_FOR_EVENT, "payment.captured");
+    TraceState currentState =
+        createTraceState(TraceStatus.TTL_EXPIRED_FOR_EVENT, "payment.captured");
     when(traceStateService.findById("trace-1")).thenReturn(currentState);
     when(traceStateService.isTtlExpired(currentState)).thenReturn(true);
 
@@ -178,17 +186,19 @@ class EventServiceTest {
 
   @Test
   void ingest_differentNameAfterDeadline_isAcceptedAndFlowContinues() {
-    EventRequest request = newRequest("evt-7", "trace-1", "shipment.created", "delivered", 3600, Boolean.FALSE);
+    EventRequest request =
+        newRequest("evt-7", "trace-1", "shipment.created", "delivered", 3600, Boolean.FALSE);
     when(eventRepository.existsByEventId("evt-7")).thenReturn(false);
     TraceState currentState = createTraceState(TraceStatus.WAITING_OTHER_EVENT, "payment.captured");
     when(traceStateService.findById("trace-1")).thenReturn(currentState);
     when(traceStateService.isTtlExpired(currentState)).thenReturn(true);
-    TraceState newState = createTraceState(TraceStatus.WAITING_OTHER_EVENT, "delivered");
-    when(traceStateService.save(any(), any())).thenReturn(newState);
 
     EventResponse response = eventService.ingest(request);
 
-    assertThat(response.status()).isEqualTo(TraceStatus.WAITING_OTHER_EVENT);
+    assertThat(response.eventName()).isEqualTo("shipment.created");
+    assertThat(response.nextExpectedEvent()).isEqualTo("delivered");
+    assertThat(response.nextEventTtlSeconds()).isEqualTo(3600);
+    assertThat(response.finalEvent()).isFalse();
     verify(eventRepository).save(any(Event.class));
     verify(traceStateService).save(eq(currentState), any(Event.class));
     verify(traceStateService, never()).markTtlExpired(any());
@@ -196,17 +206,17 @@ class EventServiceTest {
 
   @Test
   void ingest_differentNameAfterDeadlineAndFinalEvent_isAcceptedAndStateCompleted() {
-    EventRequest request = newRequest("evt-7", "trace-1", "shipment.created", "delivered", 3600, Boolean.TRUE);
+    EventRequest request =
+        newRequest("evt-7", "trace-1", "shipment.created", "delivered", 3600, Boolean.TRUE);
     when(eventRepository.existsByEventId("evt-7")).thenReturn(false);
-    TraceState currentState = createTraceState(TraceStatus.TTL_EXPIRED_FOR_EVENT, "payment.captured");
+    TraceState currentState =
+        createTraceState(TraceStatus.TTL_EXPIRED_FOR_EVENT, "payment.captured");
     when(traceStateService.findById("trace-1")).thenReturn(currentState);
     when(traceStateService.isTtlExpired(currentState)).thenReturn(true);
-    TraceState newState = createTraceState(TraceStatus.COMPLETED, "delivered");
-    when(traceStateService.save(any(), any())).thenReturn(newState);
 
     EventResponse response = eventService.ingest(request);
 
-    assertThat(response.status()).isEqualTo(TraceStatus.COMPLETED);
+    assertThat(response.finalEvent()).isTrue();
     verify(eventRepository).save(any(Event.class));
     verify(traceStateService).save(eq(currentState), any(Event.class));
     verify(traceStateService, never()).markTtlExpired(any());
@@ -214,11 +224,10 @@ class EventServiceTest {
 
   @Test
   void ingest_validEvent_persistsEventBeforeUpdatingTraceState() {
-    EventRequest request = newRequest("evt-7", "trace-1", "order.created", null, null, Boolean.FALSE);
+    EventRequest request =
+        newRequest("evt-7", "trace-1", "order.created", null, null, Boolean.FALSE);
     when(eventRepository.existsByEventId("evt-7")).thenReturn(false);
     when(traceStateService.findById("trace-1")).thenReturn(null);
-    TraceState newState = createTraceState(TraceStatus.STARTED, null);
-    when(traceStateService.save(any(), any())).thenReturn(newState);
 
     eventService.ingest(request);
 

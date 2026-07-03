@@ -72,7 +72,7 @@ public class TraceStateService {
   }
 
   private TraceState applyTransition(
-          TraceState currentState, Event event, TraceStateTransitionResult transition) {
+      TraceState currentState, Event event, TraceStateTransitionResult transition) {
     Instant now = Instant.now();
     TraceState state = currentState != null ? currentState : new TraceState();
 

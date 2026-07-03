@@ -61,9 +61,22 @@ public class EventService {
     Event event = buildEvent(request);
     eventRepository.save(event);
 
-    TraceState newState = traceStateService.save(currentState, event);
+    traceStateService.save(currentState, event);
 
-    return new EventResponse(event.getEventId(), event.getTraceId(), newState.getStatus());
+    return toResponse(event);
+  }
+
+  private EventResponse toResponse(Event event) {
+    return new EventResponse(
+        event.getEventId(),
+        event.getTraceId(),
+        event.getEventName(),
+        event.getResult(),
+        event.getOccurredAt(),
+        event.getReceivedAt(),
+        event.getNextExpectedEvent(),
+        event.getNextEventTtlSeconds(),
+        event.isFinalEvent());
   }
 
   private Event buildEvent(EventRequest request) {
